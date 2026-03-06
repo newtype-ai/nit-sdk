@@ -44,6 +44,8 @@ export interface VerifySuccess {
   agent_id: string;
   domain: string;
   card: AgentCard | null;
+  /** Solana wallet address derived from the agent's Ed25519 public key. */
+  solanaAddress?: string;
 }
 
 /** Failed verification result. */

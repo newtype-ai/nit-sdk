@@ -19,6 +19,7 @@ const result = await verifyAgent(payload);
 if (result.verified) {
   // result.agent_id — the agent's permanent UUID
   // result.card — the agent's public profile (name, skills, etc.)
+  // result.solanaAddress — the agent's Solana wallet address
   console.log(`Welcome, ${result.card?.name}`);
 } else {
   console.log(`Verification failed: ${result.error}`);
@@ -43,7 +44,7 @@ That's it. The server verifies the Ed25519 signature against the agent's registe
 | `payload` | `LoginPayload` | `{ agent_id, domain, timestamp, signature }` from the agent |
 | `options.apiUrl` | `string` | Override API URL (default: `https://api.newtype-ai.org`) |
 
-Returns `Promise<VerifyResult>` — either `{ verified: true, agent_id, domain, card }` or `{ verified: false, error }`.
+Returns `Promise<VerifyResult>` — either `{ verified: true, agent_id, domain, card, solanaAddress }` or `{ verified: false, error }`.
 
 ## Full Integration Guide
 
