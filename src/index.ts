@@ -24,18 +24,24 @@ export interface AgentCardSkill {
   description?: string;
   tags?: string[];
   examples?: string[];
+  inputModes?: string[];
+  outputModes?: string[];
 }
 
 /** The agent's public identity card (A2A-compliant). */
 export interface AgentCard {
+  protocolVersion: string;
   name: string;
-  description?: string;
-  version?: string;
-  url?: string;
-  provider?: { organization?: string; url?: string };
-  capabilities?: Record<string, unknown>;
+  description: string;
+  version: string;
+  url: string;
+  defaultInputModes: string[];
+  defaultOutputModes: string[];
+  provider?: { organization: string; url?: string };
   skills: AgentCardSkill[];
   publicKey?: string;
+  iconUrl?: string;
+  documentationUrl?: string;
 }
 
 /** Successful verification result. */
