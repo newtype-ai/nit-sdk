@@ -1,5 +1,5 @@
 /**
- * @newtype-ai/sdk — Verify agent identity with one function call.
+ * @newtype-ai/nit-sdk — Verify agent identity with one function call.
  *
  * Apps receive a login payload from an agent (via nit) and call
  * verifyAgent() to confirm the agent's identity. No crypto needed.
@@ -87,7 +87,7 @@ const DEFAULT_API_URL = 'https://api.newtype-ai.org';
  *
  * @example
  * ```ts
- * import { verifyAgent } from '@newtype-ai/sdk';
+ * import { verifyAgent } from '@newtype-ai/nit-sdk';
  *
  * const result = await verifyAgent(payload);
  * if (result.verified) {
@@ -124,7 +124,7 @@ export async function verifyAgent(
  *
  * @example
  * ```ts
- * import { verifyAgent, fetchAgentCard } from '@newtype-ai/sdk';
+ * import { verifyAgent, fetchAgentCard } from '@newtype-ai/nit-sdk';
  *
  * const result = await verifyAgent(payload);
  * if (result.verified) {

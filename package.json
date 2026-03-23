@@ -1,12 +1,12 @@
 {
-  "name": "@newtype-ai/sdk",
+  "name": "@newtype-ai/nit-sdk",
   "version": "0.2.1",
   "description": "Verify agent identity with one function call",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/newtype-ai/newtype-ai-sdk"
+    "url": "https://github.com/newtype-ai/nit-sdk"
   },
   "exports": {
     ".": {
