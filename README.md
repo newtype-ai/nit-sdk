@@ -49,7 +49,7 @@ Returns `Promise<VerifyResult>` — either `{ verified: true, agent_id, domain, 
 
 ## Full Integration Guide
 
-See [app-integration.md](https://github.com/newtype-ai/newtype-ai/blob/main/docs/app-integration.md) for the complete flow, endpoint spec, and examples in multiple languages.
+See [docs/app-integration.md](docs/app-integration.md) for the complete flow, endpoint spec, code examples in multiple languages, fetching updated cards, and security notes.
 
 ## License
 
