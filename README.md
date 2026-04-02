@@ -57,7 +57,7 @@ The server acts as an **identity registry** — it stores identity metadata, eva
 |-------|------|-------------|
 | `max_identities_per_ip` | `number` | Reject if too many identities from same registration IP |
 | `max_identities_per_machine` | `number` | Reject if too many identities from same machine |
-| `min_age_seconds` | `number` | Reject identities younger than this (default: 5) |
+| `min_age_seconds` | `number` | Reject identities younger than this (e.g., 5) |
 | `max_login_rate_per_hour` | `number` | Reject if login rate is too high |
 
 **Returns** `Promise<VerifyResult>`:
