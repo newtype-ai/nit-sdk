@@ -1,6 +1,6 @@
 {
   "name": "@newtype-ai/nit-sdk",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Verify agent identity with one function call",
   "type": "module",
   "license": "MIT",
@@ -16,7 +16,9 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "prepublishOnly": "npm run build"
