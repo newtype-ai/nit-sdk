@@ -15,6 +15,8 @@ export interface LoginPayload {
   domain: string;
   timestamp: number;
   signature: string;
+  /** Agent's public key. Present in nit >= 0.6.0. */
+  public_key?: string;
 }
 
 /** A skill listed in an agent's card. */
@@ -45,9 +47,36 @@ export interface AgentCard {
   documentationUrl?: string;
 }
 
+/** Identity metadata returned by the server. */
+export interface IdentityMetadata {
+  registration_timestamp: number | null;
+  machine_identity_count: number;
+  ip_identity_count: number;
+  total_logins: number;
+  last_login_timestamp: number | null;
+  unique_domains: number;
+}
+
+/** App-defined trust policy. Server evaluates and returns admitted: true/false. */
+export interface VerifyPolicy {
+  max_identities_per_ip?: number;
+  max_identities_per_machine?: number;
+  min_age_seconds?: number;
+  max_login_rate_per_hour?: number;
+}
+
+/** Server attestation proving the server endorsed this verification. */
+export interface ServerAttestation {
+  server_signature: string;
+  server_url: string;
+  server_public_key: string;
+}
+
 /** Successful verification result. */
 export interface VerifySuccess {
   verified: true;
+  /** Whether the identity meets the app's policy. True if no policy were specified. */
+  admitted: boolean;
   agent_id: string;
   domain: string;
   card: AgentCard | null;
@@ -57,6 +86,10 @@ export interface VerifySuccess {
   wallet?: { solana: string; evm: string } | null;
   /** HMAC-signed read token for fetching the agent's domain branch card. 30-day expiry. */
   readToken: string;
+  /** Identity metadata — registration time, login count, machine/IP grouping, etc. */
+  identity?: IdentityMetadata;
+  /** Server attestation (if server signing key is configured). */
+  attestation?: ServerAttestation;
 }
 
 /** Failed verification result. */
@@ -70,6 +103,8 @@ export type VerifyResult = VerifySuccess | VerifyFailure;
 export interface VerifyOptions {
   /** Override the API base URL. Defaults to https://api.newtype-ai.org */
   apiUrl?: string;
+  /** App-defined trust policy. Server evaluates and returns admitted: true/false. */
+  policy?: VerifyPolicy;
 }
 
 export interface FetchCardOptions {
@@ -111,6 +146,7 @@ export async function verifyAgent(
       domain: payload.domain,
       timestamp: payload.timestamp,
       signature: payload.signature,
+      ...(options?.policy ? { policy: options.policy } : {}),
     }),
   });
 

@@ -55,17 +55,22 @@ Content-Type: application/json
   "agent_id": "550e8400-e29b-41d4-a716-446655440000",
   "domain": "your-app.com",
   "timestamp": 1710000000,
-  "signature": "base64-encoded-ed25519-signature"
+  "signature": "base64-encoded-ed25519-signature",
+  "policy": {
+    "max_identities_per_machine": 10,
+    "min_age_seconds": 3600
+  }
 }
 ```
 
-All four fields come directly from the agent's login payload. Forward them as-is.
+The first four fields come directly from the agent's login payload. `policy` is optional — omit it to accept all verified agents.
 
 ### Response (success)
 
 ```json
 {
   "verified": true,
+  "admitted": true,
   "agent_id": "550e8400-e29b-41d4-a716-446655440000",
   "domain": "your-app.com",
   "card": {
@@ -77,14 +82,43 @@ All four fields come directly from the agent's login payload. Forward them as-is
   },
   "branch": "your-app.com",
   "wallet": { "solana": "7Xf3kQ...", "evm": "0x1a2b..." },
-  "readToken": "eyJzdWIiOiI1NTBlODQwMC..."
+  "readToken": "eyJzdWIiOiI1NTBlODQwMC...",
+  "identity": {
+    "registration_timestamp": 1709000000,
+    "machine_identity_count": 3,
+    "ip_identity_count": 5,
+    "total_logins": 42,
+    "last_login_timestamp": 1709120000,
+    "unique_domains": 4
+  },
+  "attestation": {
+    "server_signature": "base64...",
+    "server_url": "https://api.newtype-ai.org",
+    "server_public_key": "ed25519:base64..."
+  }
 }
 ```
 
+- `admitted` — whether the identity meets your `policy`. Always `true` if no policy were specified.
+- `identity` — raw identity metadata. Use this for custom trust logic beyond what `policy` supports (e.g., "only accept agents that have logged into at least 3 other apps").
+- `attestation` — server's Ed25519 signature over the verification result. Apps can cache and re-verify offline.
 - `card` — the agent's card for your domain. If the agent has pushed a branch named after your domain, you get that tailored card. Otherwise you get the main (public) card.
 - `branch` — which branch the card came from: your domain name or `"main"`.
 - `wallet` — chain wallet addresses derived from the agent's Ed25519 keypair. `solana` (base58 of pubkey) and `evm` (EIP-55 checksummed). `null` for agents using older nit versions.
 - `readToken` — a time-limited token (30 days) for fetching the agent's latest domain card. Store it alongside the agent's session.
+
+### Trust Requirements
+
+The server acts as an **identity registry** — like a credit bureau, it stores data and never rejects identities. Your app defines its own trust policy via `policy`:
+
+| Requirement | Type | Description |
+|---|---|---|
+| `max_identities_per_ip` | number | Reject if too many identities from same registration IP |
+| `max_identities_per_machine` | number | Reject if too many identities from same machine |
+| `min_age_seconds` | number | Reject identities younger than this |
+| `max_login_rate_per_hour` | number | Reject if login rate is too high |
+
+Like Stripe Radar: the server evaluates rules server-side for convenience, and returns raw metadata for transparency. Your app can also inspect the `identity` object for custom logic.
 
 ### Response (failure)
 
@@ -135,10 +169,12 @@ Or use the SDK: `npm install @newtype-ai/nit-sdk`
 ```javascript
 import { verifyAgent, fetchAgentCard } from '@newtype-ai/nit-sdk';
 
-const result = await verifyAgent(payload);
-if (result.verified) {
+const result = await verifyAgent(payload, {
+  policy: { max_identities_per_machine: 10, min_age_seconds: 3600 }
+});
+if (result.verified && result.admitted) {
   // result.card — domain-specific card (or main if no domain branch)
-  // result.branch — "your-app.com" or "main"
+  // result.identity — registration time, login count, machine/IP grouping
   // result.readToken — store this to fetch updated cards later
 
   // Fetch the latest card anytime during the 30-day window:
@@ -229,22 +265,27 @@ The `card` object contains the agent's profile for your domain: name, descriptio
 
 ### Identity vs Admission
 
-nit verifies **identity** — the signature is valid, the agent is who it claims to be. It does not validate **card content**. An agent can have `verified: true` with an empty name and zero skills.
+nit verifies **identity** (`verified: true`) and evaluates **trust policy** (`admitted: true`). These are separate concerns:
 
-Your app decides what to require. After verification, inspect the card and enforce your own admission policy:
+- `verified` — the Ed25519 signature is valid. The agent is who it claims to be. This is a cryptographic fact.
+- `admitted` — the identity meets your app's trust policy. This is your policy.
+
+An agent can be `verified: true` but `admitted: false` (too many identities from the same machine, too new, etc.). Your app controls admission.
 
 ```javascript
-const result = await verifyAgent(payload);
-if (!result.verified) return deny();
+const result = await verifyAgent(payload, {
+  policy: { min_age_seconds: 3600, max_identities_per_machine: 10 }
+});
+if (!result.verified) return deny('Invalid signature');
+if (!result.admitted) return deny('Identity does not meet trust policy');
 
-// Identity verified — now check card content (your policy, not nit's)
+// Both checks passed — now inspect card content (your policy)
 if (!result.card?.name) return reject("Set a name on your agent card");
-if (!result.card?.skills?.length) return reject("Add at least one skill");
 
 createSession(result.agent_id);
 ```
 
-The cryptographic fields (`publicKey`, `wallet`) are enforced by nit and cannot be faked. Everything else — name, description, skills — is agent-controlled. Apps that need specific fields should validate and return clear error messages so agents know what to fix.
+The `identity` object gives you raw metadata for custom policies beyond what `policy` supports. The cryptographic fields (`publicKey`, `wallet`) are enforced by nit and cannot be faked. Everything else — name, description, skills — is agent-controlled.
 
 ## Prerequisites
 
