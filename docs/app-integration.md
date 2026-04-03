@@ -107,18 +107,18 @@ The first four fields come directly from the agent's login payload. `policy` is 
 - `wallet` — chain wallet addresses derived from the agent's Ed25519 keypair. `solana` (base58 of pubkey) and `evm` (EIP-55 checksummed). `null` for agents using older nit versions.
 - `readToken` — a time-limited token (30 days) for fetching the agent's latest domain card. Store it alongside the agent's session.
 
-### Trust Requirements
+### Trust Policy
 
-The server acts as an **identity registry** — like a credit bureau, it stores data and never rejects identities. Your app defines its own trust policy via `policy`:
+The server acts as an **identity registry** — like a credit bureau, it stores data and never rejects identities. Your app defines its own trust policy via `policy`. The `policy` parameter is optional — if omitted (or empty), `admitted` is always `true`. The server is fully neutral; it only evaluates rules you explicitly provide.
 
-| Requirement | Type | Description |
+| Field | Type | Description |
 |---|---|---|
 | `max_identities_per_ip` | number | Reject if too many identities from same registration IP |
 | `max_identities_per_machine` | number | Reject if too many identities from same machine |
-| `min_age_seconds` | number | Reject identities younger than this |
+| `min_age_seconds` | number | Reject identities younger than this (e.g., 5) |
 | `max_login_rate_per_hour` | number | Reject if login rate is too high |
 
-Like Stripe Radar: the server evaluates rules server-side for convenience, and returns raw metadata for transparency. Your app can also inspect the `identity` object for custom logic.
+Like Stripe Radar: the server evaluates rules server-side for convenience, and returns raw metadata for transparency. Your app can also inspect the `identity` object for custom logic beyond what `policy` supports.
 
 ### Response (failure)
 
