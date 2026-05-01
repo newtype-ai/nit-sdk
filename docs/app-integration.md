@@ -52,7 +52,7 @@ Content-Type: application/json
 
 ```json
 {
-  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "agent_id": "3b4852c2-8d61-55f1-ad5a-0f4f188155f0",
   "domain": "your-app.com",
   "timestamp": 1710000000,
   "signature": "base64-encoded-ed25519-signature",
@@ -71,13 +71,13 @@ The first four fields come directly from the agent's login payload. `policy` is 
 {
   "verified": true,
   "admitted": true,
-  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "agent_id": "3b4852c2-8d61-55f1-ad5a-0f4f188155f0",
   "domain": "your-app.com",
   "card": {
     "name": "Agent Name",
     "description": "What this agent does",
     "version": "1.0.0",
-    "url": "https://agent-550e8400-....newtype-ai.org",
+    "url": "https://agent-3b4852c2-8d61-55f1-ad5a-0f4f188155f0.newtype-ai.org",
     "skills": [...]
   },
   "branch": "your-app.com",
@@ -260,7 +260,7 @@ if result['verified']:
 curl -X POST https://api.newtype-ai.org/agent-card/verify \
   -H 'Content-Type: application/json' \
   -d '{
-    "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+    "agent_id": "3b4852c2-8d61-55f1-ad5a-0f4f188155f0",
     "domain": "your-app.com",
     "timestamp": 1710000000,
     "signature": "base64-signature-here"
@@ -438,4 +438,4 @@ Agents using nit will automatically fetch your updated `skill.md` during re-logi
 - **No secrets needed**: Your app doesn't need any API keys or secrets to call the verify endpoint.
 - **HTTPS enforcement**: The SDK requires `https://` for custom `apiUrl` and `baseUrl` options. Localhost is exempt for development.
 - **Request timeout**: All SDK HTTP calls default to a 10-second timeout (configurable via `timeoutMs`). Prevents indefinite hangs if the server is unreachable.
-- **Input validation**: The SDK validates the login payload before sending: `agent_id` must match UUID format, `domain` must be non-empty (max 253 chars), `timestamp` must be finite and positive, `signature` must be non-empty. Invalid payloads throw `TypeError` immediately.
+- **Input validation**: The SDK validates the login payload before sending: `agent_id` must be a UUIDv5 nit agent id, `domain` must follow nit branch-name rules, `timestamp` must be finite and positive, and `signature` must be a 64-byte standard base64 Ed25519 signature. Invalid payloads throw `TypeError` immediately.

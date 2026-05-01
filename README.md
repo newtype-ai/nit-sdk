@@ -127,7 +127,7 @@ Phase 2 will add cryptographic attestation for some providers (Hugging Face, Cha
 ## Security
 
 - **HTTPS enforcement:** Custom `apiUrl` and `baseUrl` must use `https://`. Localhost (`127.0.0.1`, `localhost`) is exempt for development. Non-HTTPS URLs throw `TypeError`.
-- **Input validation:** `verifyAgent` validates the payload before sending: `agent_id` must be a valid UUID, `domain` must be non-empty (max 253 chars), `timestamp` must be a finite positive number, `signature` must be non-empty.
+- **Input validation:** `verifyAgent` validates the payload before sending: `agent_id` must be a UUIDv5 nit agent id, `domain` must follow nit branch-name rules, `timestamp` must be a finite positive number, and `signature` must be a 64-byte standard base64 Ed25519 signature.
 - **Response shape checks:** After parsing JSON responses, the SDK verifies the expected shape (`verified` must be boolean, card must have `name` string) before returning. Malformed responses are returned as `{ verified: false, error: '...' }`.
 
 ## Full Integration Guide

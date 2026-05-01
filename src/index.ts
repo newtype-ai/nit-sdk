@@ -24,10 +24,15 @@ export class NitSdkError extends Error {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const AGENT_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REF_NAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
+const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024;
+const MAX_AGENT_CARD_BYTES = 128 * 1024;
 
 /** Throw if a user-supplied URL is not HTTPS (localhost exempt for dev). */
 function assertHttps(url: string, label: string): void {
@@ -50,20 +55,11 @@ function assertHttps(url: string, label: string): void {
 
 /** Validate the LoginPayload fields before sending to the server. */
 function validatePayload(payload: LoginPayload): void {
-  if (typeof payload.agent_id !== 'string' || !UUID_RE.test(payload.agent_id)) {
-    throw new TypeError(
-      'payload.agent_id must be a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)',
-    );
+  if (payload === null || typeof payload !== 'object') {
+    throw new TypeError('payload must be an object');
   }
-  if (
-    typeof payload.domain !== 'string' ||
-    payload.domain.length === 0 ||
-    payload.domain.length > 253
-  ) {
-    throw new TypeError(
-      'payload.domain must be a non-empty string (max 253 chars)',
-    );
-  }
+  validateAgentId(payload.agent_id, 'payload.agent_id');
+  validateBranchName(payload.domain, 'payload.domain');
   if (
     typeof payload.timestamp !== 'number' ||
     !Number.isFinite(payload.timestamp) ||
@@ -74,6 +70,30 @@ function validatePayload(payload: LoginPayload): void {
   if (typeof payload.signature !== 'string' || payload.signature.length === 0) {
     throw new TypeError('payload.signature must be a non-empty string');
   }
+  if (strictBase64ByteLength(payload.signature) !== 64) {
+    throw new TypeError('payload.signature must be a 64-byte standard base64 Ed25519 signature');
+  }
+  if (payload.public_key !== undefined) {
+    validatePublicKeyField(payload.public_key, 'payload.public_key');
+  }
+}
+
+function validateTimeoutMs(timeoutMs: number): void {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new TypeError('timeoutMs must be a finite positive number');
+  }
+}
+
+function validatePolicy(policy: VerifyPolicy | undefined): void {
+  if (policy === undefined) return;
+  if (policy === null || typeof policy !== 'object') {
+    throw new TypeError('options.policy must be an object');
+  }
+  for (const [key, value] of Object.entries(policy)) {
+    if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+      throw new TypeError(`options.policy.${key} must be a non-negative finite number`);
+    }
+  }
 }
 
 /** Fetch with an AbortController timeout. */
@@ -81,12 +101,249 @@ function fetchWithTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number,
+  label = 'HTTP request',
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return fetch(url, { ...init, signal: controller.signal }).finally(() =>
-    clearTimeout(timer),
-  );
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  return fetch(url, { ...init, signal: controller.signal })
+    .catch((err) => {
+      if (timedOut) {
+        throw new NitSdkError(`${label} timed out after ${timeoutMs}ms`, 0);
+      }
+      throw err;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
+async function readResponseText(
+  res: Response,
+  label: string,
+  maxBytes = DEFAULT_MAX_RESPONSE_BYTES,
+): Promise<string> {
+  const length = res.headers.get('content-length');
+  const parsedLength = length ? Number.parseInt(length, 10) : NaN;
+  if (Number.isFinite(parsedLength) && parsedLength > maxBytes) {
+    throw new NitSdkError(`${label} exceeds ${maxBytes} bytes`, 0);
+  }
+
+  if (!res.body) {
+    const text = await res.text();
+    if (new TextEncoder().encode(text).byteLength > maxBytes) {
+      throw new NitSdkError(`${label} exceeds ${maxBytes} bytes`, 0);
+    }
+    return text;
+  }
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new NitSdkError(`${label} exceeds ${maxBytes} bytes`, 0);
+    }
+    chunks.push(value);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+async function readResponseJson<T>(
+  res: Response,
+  label: string,
+  maxBytes = DEFAULT_MAX_RESPONSE_BYTES,
+): Promise<T> {
+  const text = await readResponseText(res, label, maxBytes);
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new NitSdkError(`${label} is not valid JSON`, 0);
+  }
+}
+
+function validateAgentId(agentId: unknown, label: string): asserts agentId is string {
+  if (typeof agentId !== 'string' || !AGENT_ID_RE.test(agentId)) {
+    throw new TypeError(`${label} must be a UUIDv5 agent id`);
+  }
+}
+
+function validateBranchName(name: unknown, label: string): asserts name is string {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
+  if (name.length > 253) {
+    throw new TypeError(`${label} cannot exceed 253 characters`);
+  }
+  if (/[\x00-\x1f\x7f]/.test(name)) {
+    throw new TypeError(`${label} must not contain control characters`);
+  }
+  if (/[:/\\]/.test(name) || name.includes('..')) {
+    throw new TypeError(`${label} contains unsafe characters`);
+  }
+  if (!REF_NAME_RE.test(name)) {
+    throw new TypeError(`${label} must start and end with an alphanumeric character and contain only letters, digits, dots, underscores, or hyphens`);
+  }
+}
+
+function strictBase64ByteLength(value: string): number | null {
+  if (!BASE64_RE.test(value)) {
+    return null;
+  }
+  try {
+    const bin = atob(value);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    const canonical = btoa(String.fromCharCode(...bytes));
+    return canonical === value ? bytes.length : null;
+  } catch {
+    return null;
+  }
+}
+
+function validatePublicKeyField(value: unknown, label: string): void {
+  if (typeof value !== 'string' || !value.startsWith('ed25519:')) {
+    throw new TypeError(`${label} must use ed25519:<base64> format`);
+  }
+  if (strictBase64ByteLength(value.slice('ed25519:'.length)) !== 32) {
+    throw new TypeError(`${label} must contain a 32-byte standard base64 Ed25519 key`);
+  }
+}
+
+function validateReadToken(token: unknown, label = 'readToken'): asserts token is string {
+  if (typeof token !== 'string' || token.length === 0) {
+    throw new TypeError(`${label} must be a non-empty string`);
+  }
+  if (token.length > 4096) {
+    throw new TypeError(`${label} is too long`);
+  }
+  const parts = token.split('.');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new TypeError(`${label} must be a two-part signed token`);
+  }
+  if (!BASE64URL_RE.test(parts[0]) || !BASE64URL_RE.test(parts[1])) {
+    throw new TypeError(`${label} must use base64url token encoding`);
+  }
+}
+
+function assertString(value: unknown, label: string, required = true): string | undefined {
+  if (value === undefined) {
+    if (required) throw new NitSdkError(`Malformed response: ${label} is required`, 0);
+    return undefined;
+  }
+  if (typeof value !== 'string') {
+    throw new NitSdkError(`Malformed response: ${label} must be a string`, 0);
+  }
+  return value;
+}
+
+function assertStringArray(value: unknown, label: string): void {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new NitSdkError(`Malformed response: ${label} must be a string array`, 0);
+  }
+}
+
+function validateWallet(value: unknown, label: string): void {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new NitSdkError(`Malformed response: ${label} must be an object`, 0);
+  }
+  const wallet = value as Record<string, unknown>;
+  assertString(wallet.solana, `${label}.solana`);
+  assertString(wallet.evm, `${label}.evm`);
+}
+
+function validateAgentCard(card: unknown, label = 'agent card'): asserts card is AgentCard {
+  if (card === null || typeof card !== 'object' || Array.isArray(card)) {
+    throw new NitSdkError(`Malformed ${label} response`, 0);
+  }
+  const obj = card as Record<string, unknown>;
+  assertString(obj.protocolVersion, `${label}.protocolVersion`);
+  assertString(obj.name, `${label}.name`);
+  assertString(obj.description, `${label}.description`);
+  assertString(obj.version, `${label}.version`);
+  assertString(obj.url, `${label}.url`);
+  assertStringArray(obj.defaultInputModes, `${label}.defaultInputModes`);
+  assertStringArray(obj.defaultOutputModes, `${label}.defaultOutputModes`);
+  if (!Array.isArray(obj.skills)) {
+    throw new NitSdkError(`Malformed response: ${label}.skills must be an array`, 0);
+  }
+  for (const [index, skill] of obj.skills.entries()) {
+    if (skill === null || typeof skill !== 'object' || Array.isArray(skill)) {
+      throw new NitSdkError(`Malformed response: ${label}.skills[${index}] must be an object`, 0);
+    }
+    assertString((skill as Record<string, unknown>).id, `${label}.skills[${index}].id`);
+  }
+  if (obj.publicKey !== undefined) {
+    validatePublicKeyField(obj.publicKey, `${label}.publicKey`);
+  }
+  if (obj.wallet !== undefined) {
+    validateWallet(obj.wallet, `${label}.wallet`);
+  }
+  if (obj.runtime !== undefined) {
+    if (obj.runtime === null || typeof obj.runtime !== 'object' || Array.isArray(obj.runtime)) {
+      throw new NitSdkError(`Malformed response: ${label}.runtime must be an object`, 0);
+    }
+    const runtime = obj.runtime as Record<string, unknown>;
+    assertString(runtime.provider, `${label}.runtime.provider`);
+    assertString(runtime.model, `${label}.runtime.model`);
+    assertString(runtime.harness, `${label}.runtime.harness`);
+    if (typeof runtime.declared_at !== 'number' || !Number.isFinite(runtime.declared_at)) {
+      throw new NitSdkError(`Malformed response: ${label}.runtime.declared_at must be a finite number`, 0);
+    }
+  }
+}
+
+function validateVerifyResult(data: unknown): VerifyResult {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    return { verified: false, error: 'Malformed server response' };
+  }
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.verified !== 'boolean') {
+    return { verified: false, error: 'Malformed server response (missing verified field)' };
+  }
+  if (!obj.verified) {
+    return {
+      verified: false,
+      error: typeof obj.error === 'string' ? obj.error : 'Verification failed',
+    };
+  }
+  try {
+    validateAgentId(obj.agent_id, 'response.agent_id');
+    validateBranchName(obj.domain, 'response.domain');
+    validateBranchName(obj.branch, 'response.branch');
+    validateReadToken(obj.readToken, 'response.readToken');
+    if (typeof obj.admitted !== 'boolean') {
+      throw new TypeError('response.admitted must be a boolean');
+    }
+    if (!('card' in obj)) {
+      throw new TypeError('response.card is required');
+    }
+    if (obj.card !== null && obj.card !== undefined) {
+      validateAgentCard(obj.card, 'response.card');
+    }
+    if (obj.wallet !== null && obj.wallet !== undefined) {
+      validateWallet(obj.wallet, 'response.wallet');
+    }
+  } catch (err) {
+    return {
+      verified: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  return data as VerifyResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +384,12 @@ export interface AgentCard {
   skills: AgentCardSkill[];
   publicKey?: string;
   wallet?: { solana: string; evm: string };
+  runtime?: {
+    provider: string;
+    model: string;
+    harness: string;
+    declared_at: number;
+  };
   iconUrl?: string;
   documentationUrl?: string;
 }
@@ -250,41 +513,42 @@ export async function verifyAgent(
 ): Promise<VerifyResult> {
   validatePayload(payload);
 
-  const apiUrl = options?.apiUrl ?? DEFAULT_API_URL;
+  const apiUrl = (options?.apiUrl ?? DEFAULT_API_URL).replace(/\/$/, '');
   if (options?.apiUrl) assertHttps(apiUrl, 'options.apiUrl');
+  validatePolicy(options?.policy);
 
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  validateTimeoutMs(timeoutMs);
 
-  const res = await fetchWithTimeout(
-    `${apiUrl}/agent-card/verify`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agent_id: payload.agent_id,
-        domain: payload.domain,
-        timestamp: payload.timestamp,
-        signature: payload.signature,
-        ...(options?.policy ? { policy: options.policy } : {}),
-      }),
-    },
-    timeoutMs,
-  );
+  try {
+    const res = await fetchWithTimeout(
+      `${apiUrl}/agent-card/verify`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_id: payload.agent_id,
+          domain: payload.domain,
+          timestamp: payload.timestamp,
+          signature: payload.signature,
+          ...(options?.policy ? { policy: options.policy } : {}),
+        }),
+      },
+      timeoutMs,
+      'Agent verification request',
+    );
 
-  if (!res.ok) {
-    return { verified: false, error: `Server error (HTTP ${res.status})` };
+    if (!res.ok) {
+      return { verified: false, error: `Server error (HTTP ${res.status})` };
+    }
+
+    return validateVerifyResult(await readResponseJson<unknown>(res, 'Verify response'));
+  } catch (err) {
+    return {
+      verified: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
-
-  const data: unknown = await res.json();
-  if (
-    typeof data !== 'object' ||
-    data === null ||
-    typeof (data as Record<string, unknown>).verified !== 'boolean'
-  ) {
-    return { verified: false, error: 'Malformed server response (missing verified field)' };
-  }
-
-  return data as VerifyResult;
 }
 
 /**
@@ -310,17 +574,23 @@ export async function fetchAgentCard(
   readToken: string,
   options?: FetchCardOptions,
 ): Promise<AgentCard | null> {
+  validateAgentId(agentId, 'agentId');
+  validateBranchName(domain, 'domain');
+  validateReadToken(readToken);
+
   const baseUrl =
-    options?.baseUrl ?? `https://agent-${agentId}.newtype-ai.org`;
+    (options?.baseUrl ?? `https://agent-${agentId}.newtype-ai.org`).replace(/\/$/, '');
   if (options?.baseUrl) assertHttps(baseUrl, 'options.baseUrl');
 
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  validateTimeoutMs(timeoutMs);
   const url = `${baseUrl}/.well-known/agent-card.json?branch=${encodeURIComponent(domain)}`;
 
   const res = await fetchWithTimeout(
     url,
     { headers: { Authorization: `Bearer ${readToken}` } },
     timeoutMs,
+    'Agent card request',
   );
 
   // 404 → card not found (expected)
@@ -334,14 +604,7 @@ export async function fetchAgentCard(
     );
   }
 
-  const data: unknown = await res.json();
-  if (
-    typeof data !== 'object' ||
-    data === null ||
-    typeof (data as Record<string, unknown>).name !== 'string'
-  ) {
-    throw new NitSdkError('Malformed agent card response (missing name field)', 0);
-  }
-
-  return data as AgentCard;
+  const data = await readResponseJson<unknown>(res, 'Agent card response', MAX_AGENT_CARD_BYTES);
+  validateAgentCard(data);
+  return data;
 }
